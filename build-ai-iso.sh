@@ -19,13 +19,12 @@ apt-get install -y -qq curl wget software-properties-common apt-transport-https 
                    ca-certificates gnupg lsb-release
 
 # ---------- 1.5 Install Lightweight Desktop Environment ----------
-log "Installing tasksel + Xubuntu-core"
-apt-get install -y tasksel
-tasksel install xubuntu-core   # interactive, but runs headless in chroot
-# a few nice extras (small)
-apt-get install -y xfce4-terminal thunar-archive-plugin mousepad ristretto \
+# ultra-light Xfce (no tasksel)
+apt-get install -y xfce4 xfce4-terminal lightdm lightdm-gtk-greeter \
+                   thunar thunar-archive-plugin mousepad ristretto \
                    arc-theme papirus-icon-theme
 systemctl set-default graphical.target
+
 
 cat >/etc/lightdm/lightdm.conf.d/50-autologin.conf <<EOF
 [Seat:*]
