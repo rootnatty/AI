@@ -36,7 +36,7 @@ apt-get install -y -qq digikam
 log "Installing photo tools"
 apt-get install -y -qq darktable rawtherapee hugin imagemagick ffmpeg gimp exiv2 \
                    rclone duplicity testdisk intel-opencl-icd mesa-opencl-icd \
-                   cups-pdf-backend systemd-zram-generator
+                   systemd-zram-generator
 
 # ---------- 5. Flatpak ----------
 log "Installing Flatpak apps"
