@@ -4,7 +4,7 @@
 #  Auto-fixes DVD sources, repos, desktop skip, full AI-photo stack
 #
 #  AUDIT: Implemented state persistence via /tmp/ai_build_step for resume capability.
-#  FIX: Changed 'tput' package to 'ncurses-bin' to resolve 'Unable to locate package' error.
+#  CRITICAL FIX: Removed 'software-properties-common' and 'apt-transport-https' from core utility install (Section 2) as they cause build failures on modern minimal ISOs.
 # ===================================================================
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -118,9 +118,9 @@ if start_step "Installing Core Utilities"; then
     log "Refreshing package lists for core utilities"
     apt-get update -qq 
     log "Installing core utilities (including progress bar support)"
-    # FIX: Replaced 'tput' with 'ncurses-bin' which contains the tput utility.
-    # Included 'zenity' here as a core utility needed for the user menu (Step 15).
-    apt-get install -y -qq curl wget gnupg lsb-release ca-certificates software-properties-common apt-transport-https ncurses-bin zenity
+    # FIXED: Removed 'software-properties-common' and 'apt-transport-https' for modern minimal ISO stability.
+    # 'ncurses-bin' provides tput.
+    apt-get install -y -qq curl wget gnupg lsb-release ca-certificates ncurses-bin zenity
     complete_step
 fi
 
