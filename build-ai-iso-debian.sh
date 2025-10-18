@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ===================================================================
-#  build-ai-iso-smart.sh  – Ubuntu OR Debian inside Cubic / live-build / CI
-#  Auto-fixes sources, repos, packages; skips desktop if present
-#  https://github.com/YOUR_USER/ai-photo-live-smart
+#  build-ai-iso-universal.sh  – Ubuntu OR Debian  (any release)
+#  Auto-fixes DVD sources, repos, desktop skip, AI-photo stack
+#  https://github.com/YOUR_USER/ai-photo-live-universal
 # ===================================================================
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -21,23 +21,25 @@ else
 fi
 log "Detected $DISTRO ($DISTRO_CODENAME)"
 
-# ---------- 1. fix broken local sources (netinst / DVD) ----------
-if [[ -f /etc/apt/sources.list ]] && grep -q 'file:/run/Live' /etc/apt/sources.list; then
-   warn "Broken local sources found – replacing with upstream mirrors"
+# ---------- 1. fix broken DVD/local sources (netinst/live ISO) ----------
+if grep -q 'file:/run/live' /etc/apt/sources.list 2>/dev/null; then
+   warn "Broken DVD sources found – switching to upstream mirrors"
    cat >/etc/apt/sources.list <<EOF
 deb http://deb.$DISTRO.org/$DISTRO ${DISTRO_CODENAME} main contrib non-free non-free-firmware
 deb http://security.$DISTRO.org/ ${DISTRO_CODENAME}-security main contrib non-free non-free-firmware
 EOF
-   [[ "$DISTRO" == "debian" ]] && echo "deb http://deb.$DISTRO.org/$DISTRO ${DISTRO_CODENAME}-backports main contrib non-free non-free-firmware" \
+   # add backports only for debian
+   [[ "$DISTRO" == "debian" ]] && \
+   echo "deb http://deb.$DISTRO.org/$DISTRO ${DISTRO_CODENAME}-backports main contrib non-free non-free-firmware" \
         > /etc/apt/sources.list.d/backports.list
    apt-get update -qq
 fi
 
 # ---------- 2. basics ----------
 apt-get update -qq
-apt-get install -y -qq curl wget gnupg lsb-release ca-certificates
+apt-get install -y -qq curl wget gnupg lsb-release ca-certificates software-properties-common
 
-# ---------- 3. desktop (skip if any DE already present) ----------
+# ---------- 3. desktop (skip if any DE already installed) ----------
 DE_PKGS=(xfce4-session gnome-session plasma-desktop budgie-desktop cinnamon-session)
 for pkg in "${DE_PKGS[@]}"; do
     if dpkg -l | grep -q "^ii  $pkg"; then
