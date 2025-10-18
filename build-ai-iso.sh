@@ -19,8 +19,18 @@ apt-get install -y -qq curl wget software-properties-common apt-transport-https 
                    ca-certificates gnupg lsb-release
 
 # ---------- 1.5 Install Lightweight Desktop Environment ----------
-apt-get install -y xubuntu-desktop lightdm network-manager gnome-terminal
+log "Installing Xubuntu-core desktop"
+apt-get install -y xubuntu-core^ lightdm xfce4-terminal thunar-archive-plugin \
+                   mousepad ristretto gtk2-engines-pixbuf arc-theme papirus-icon-theme
 systemctl set-default graphical.target
+
+cat >/etc/lightdm/lightdm.conf.d/50-autologin.conf <<EOF
+[Seat:*]
+autologin-user=ubuntu
+autologin-user-timeout=0
+user-session=xfce
+EOF
+
 
 # ---------- 2. Docker ----------
 log "Installing Docker"
