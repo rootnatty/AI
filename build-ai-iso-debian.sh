@@ -21,9 +21,12 @@ else
 fi
 log "Detected $DISTRO ($DISTRO_CODENAME)"
 
+
+
+
 # ---------- 1. fix broken DVD/local sources (netinst/live ISO) ----------
 if grep -q 'file:/run/live' /etc/apt/sources.list 2>/dev/null; then
-   warn "Broken DVD sources found – switching to upstream mirrors"
+   warn "Broken DVD sources detected – switching to upstream mirrors"
    cat >/etc/apt/sources.list <<EOF
 deb http://deb.$DISTRO.org/$DISTRO ${DISTRO_CODENAME} main contrib non-free non-free-firmware
 deb http://security.$DISTRO.org/ ${DISTRO_CODENAME}-security main contrib non-free non-free-firmware
@@ -34,6 +37,7 @@ EOF
         > /etc/apt/sources.list.d/backports.list
    apt-get update -qq
 fi
+
 
 # ---------- 2. basics ----------
 apt-get update -qq
