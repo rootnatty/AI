@@ -39,6 +39,12 @@ EOF
 fi
 
 
+# ---------- 1½  install missing Debian helpers ----------
+if [[ "$DISTRO" == "debian" ]]; then
+   apt-get install -y software-properties-common
+fi
+
+
 # ---------- 2. basics ----------
 apt-get update -qq
 apt-get install -y -qq curl wget gnupg lsb-release ca-certificates software-properties-common
