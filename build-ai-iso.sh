@@ -55,6 +55,18 @@ apt-get install -y -qq darktable rawtherapee hugin imagemagick ffmpeg gimp exiv2
                    rclone duplicity testdisk intel-opencl-icd mesa-opencl-icd \
                    systemd-zram-generator
 
+#-------- Cleaning Space ------------
+# 1. Uninstall (Purge) some of the largest, non-essential packages installed earlier
+apt-get purge -y darktable rawtherapee hugin
+
+# 2. Automatically remove dependencies that are no longer needed
+apt-get autoremove -y
+
+# 3. Clear the local repository of downloaded package files
+apt-get clean
+#------end cleaning 
+
+
 # ---------- 5. Flatpak ----------
 log "Installing Flatpak apps"
 apt-get install -y -qq flatpak
