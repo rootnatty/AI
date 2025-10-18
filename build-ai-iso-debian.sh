@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ===================================================================
-#  build-ai-iso-debian-universal.sh  – Debian-universal edition
-#  Works on Debian ≥ 10 (Buster) and inside Cubic chroots
-#  https://github.com/YOUR_USER/ai-photo-live-debian-universal
+#  build-ai-iso-universal.sh  – Ubuntu OR Debian inside Cubic chroot
+#  Detects distro, repo, desktop presence; installs AI-photo stack
+#  https://github.com/YOUR_USER/ai-photo-live-universal
 # ===================================================================
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -11,41 +11,67 @@ R=$'\e[31m';G=$'\e[32m';Y=$'\e[33m';N=$'\e[0m'
 log(){ echo -e "${G}[INFO]${N} $*"; }
 warn(){ echo -e "${Y}[WARN]${N} $*"; }
 
-# ---------- 0. discover Debian release ----------
-DEB_CODENAME=$(lsb_release -cs)
-DEB_VERSION=$(lsb_release -sr | cut -d. -f1)
-log "Detected Debian $DEB_CODENAME (v$DEB_VERSION)"
+# ---------- 0. detect distro ----------
+if grep -q 'Ubuntu' /etc/os-release; then
+   DISTRO="ubuntu"; DISTRO_CODENAME=$(lsb_release -cs)
+elif grep -q 'Debian' /etc/os-release; then
+   DISTRO="debian"; DISTRO_CODENAME=$(lsb_release -cs)
+else
+   echo "Unsupported distro"; exit 1
+fi
+log "Detected $DISTRO ($DISTRO_CODENAME)"
 
 # ---------- 1. basics ----------
 log "Updating system"
-# add backports only if it exists for this release
-if curl -s "http://deb.debian.org/debian/dists/${DEB_CODENAME}-backports" | grep -q 'Release'; then
-    log "Enabling ${DEB_CODENAME}-backports"
-    echo "deb http://deb.debian.org/debian ${DEB_CODENAME}-backports main contrib non-free" \
-         > /etc/apt/sources.list.d/backports.list
-fi
 apt-get update -qq
-apt-get install -y -qq curl wget gnupg lsb-release ca-certificates
+apt-get install -y -qq curl wget gnupg lsb-release ca-certificates software-properties-common
 
-# ---------- 1½  desktop ----------
-log "Installing Xfce desktop"
-# task-xfce-desktop exists on every Debian ≥ 10
-apt-get install -y task-xfce-desktop lightdm
-systemctl set-default graphical.target
-cat >/etc/lightdm/lightdm.conf.d/50-autologin.conf <<EOF
+# ---------- 1½  desktop (skip if any major DE already installed) ----------
+DE_PKGS=(xfce4-session gnome-session plasma-desktop budgie-desktop cinnamon-session)
+for pkg in "${DE_PKGS[@]}"; do
+    if dpkg -l | grep -q "^ii  $pkg"; then
+        warn "Desktop environment '$pkg' already installed – skipping desktop install"
+        SKIP_DE=1; break
+    fi
+done
+if [[ "${SKIP_DE:-0}" == 1 ]]; then
+    :
+else
+    log "Installing lightweight desktop"
+    if [[ "$DISTRO" == "ubuntu" ]]; then
+        apt-get install -y xfce4 xfce4-terminal lightdm lightdm-gtk-greeter \
+                           thunar-archive-plugin mousepad ristretto arc-theme papirus-icon-theme
+    else  # debian
+        apt-get install -y task-xfce-desktop lightdm
+    fi
+    systemctl set-default graphical.target
+    cat >/etc/lightdm/lightdm.conf.d/50-autologin.conf <<EOF
 [Seat:*]
-autologin-user=debian
+autologin-user=${DISTRO}
 autologin-user-timeout=0
 user-session=xfce
 EOF
+fi
 
-# ---------- 2. Docker ----------
-if [[ -f /etc/apt/sources.list.d/backports.list ]]; then
-    log "Installing Docker from ${DEB_CODENAME}-backports"
-    apt-get install -y -qq -t "${DEB_CODENAME}-backports" docker.io docker-compose-plugin
-else
-    log "Installing Docker from regular repo"
-    apt-get install -y -qq docker.io docker-compose-plugin
+# ---------- 2. Docker (distro-specific) ----------
+log "Installing Docker"
+if [[ "$DISTRO" == "ubuntu" ]]; then
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker.gpg] \
+          https://download.docker.com/linux/ubuntu ${DISTRO_CODENAME} stable" \
+          > /etc/apt/sources.list.d/docker.list
+    apt-get update -qq
+    apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
+else  # debian
+    # enable backports only if they exist
+    if curl -s "http://deb.debian.org/debian/dists/${DISTRO_CODENAME}-backports" | grep -q 'Release'; then
+        echo "deb http://deb.debian.org/debian ${DISTRO_CODENAME}-backports main contrib non-free" \
+             > /etc/apt/sources.list.d/backports.list
+        apt-get update -qq
+        apt-get install -y -qq -t "${DISTRO_CODENAME}-backports" docker.io docker-compose-plugin
+    else
+        apt-get install -y -qq docker.io docker-compose-plugin
+    fi
 fi
 systemctl enable docker
 
@@ -68,7 +94,7 @@ else
     warn "Cubic chroot detected – skipping Flatpak to avoid bwrap spam"
 fi
 
-# ---------- 6. Python AI utils (venv, no --break-system-packages) ----------
+# ---------- 6. Python AI utils ----------
 log "Installing Python tools"
 apt-get install -y -qq python3-venv python3-dev build-essential
 python3 -m venv /opt/ai-venv
