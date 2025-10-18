@@ -2,9 +2,9 @@
 # ===================================================================
 #  build-ai-iso-universal.sh  – Ubuntu OR Debian (any release)
 #  Auto-fixes DVD sources, repos, desktop skip, full AI-photo stack
-#  https://github.com/YOUR_USER/ai-photo-live-universal
 #
-#  AUDIT: Revised for chroot safety, robust Docker setup, and cleanup.
+#  AUDIT: Implemented state persistence via /tmp/ai_build_step for resume capability.
+#  FIX: Changed 'tput' package to 'ncurses-bin' to resolve 'Unable to locate package' error.
 # ===================================================================
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -15,6 +15,25 @@ warn(){ echo -e "${Y}[WARN]${N} $*"; }
 
 TOTAL_STEPS=17
 CURRENT_STEP=0
+STATE_FILE="/tmp/ai_build_step"
+RESUME_STEP=0
+
+# --- State Persistence Functions ---
+
+# Function to read the last completed step
+load_state() {
+    if [[ -f "${STATE_FILE}" ]]; then
+        RESUME_STEP=$(<"${STATE_FILE}")
+        if [[ "${RESUME_STEP}" -gt 0 ]]; then
+            warn "Resuming from Step ${RESUME_STEP}..."
+        fi
+    fi
+}
+
+# Function to write the current step number to the state file
+complete_step() {
+    echo "${CURRENT_STEP}" > "${STATE_FILE}"
+}
 
 # Function to display a progress bar at the bottom
 # Requires tput, which is installed with core utilities in step 2.
@@ -47,160 +66,181 @@ progress_bar() {
 start_step() {
     CURRENT_STEP=$((CURRENT_STEP + 1))
     local TITLE="$1"
+
+    # Skip logic check
+    if [[ "${CURRENT_STEP}" -le "${RESUME_STEP}" ]]; then
+        log "--- ${TITLE} (Step ${CURRENT_STEP}/${TOTAL_STEPS}) --- ${Y}[SKIPPED]${N}"
+        return 1 # Return 1 to skip the body of the step
+    fi
+
     log "--- ${TITLE} (Step ${CURRENT_STEP}/${TOTAL_STEPS}) ---"
     progress_bar "${CURRENT_STEP}" "${TITLE}"
+    return 0 # Return 0 to execute the body of the step
 }
 
+# --- Main Script Execution Starts ---
+load_state
+
 # ---------- 0. detect distro + release ----------
-start_step "Detecting Distro"
-# FIX: Corrected duplicate 'grep grep' typo.
-if grep -q 'Ubuntu' /etc/os-release; then
-   DISTRO="ubuntu"; DISTRO_CODENAME=$(lsb_release -cs)
-elif grep -q 'Debian' /etc/os-release; then
-   DISTRO="debian"; DISTRO_CODENAME=$(lsb_release -cs)
-else
-   echo "Unsupported distro"; exit 1
+if start_step "Detecting Distro"; then
+    if grep -q 'Ubuntu' /etc/os-release; then
+       DISTRO="ubuntu"; DISTRO_CODENAME=$(lsb_release -cs)
+    elif grep -q 'Debian' /etc/os-release; then
+       DISTRO="debian"; DISTRO_CODENAME=$(lsb_release -cs)
+    else
+       echo "Unsupported distro"; exit 1
+    fi
+    log "Detected $DISTRO ($DISTRO_CODENAME)"
+    complete_step
 fi
-log "Detected $DISTRO ($DISTRO_CODENAME)"
 
 # ---------- 1. fix broken DVD/local sources (netinst/live ISO) ----------
-start_step "Fixing APT Sources"
-if grep -q 'file:/run/live' /etc/apt/sources.list 2>/dev/null; then
-   warn "Broken DVD sources detected – switching to upstream mirrors"
-   cat >/etc/apt/sources.list <<EOF
+if start_step "Fixing APT Sources"; then
+    if grep -q 'file:/run/live' /etc/apt/sources.list 2>/dev/null; then
+       warn "Broken DVD sources detected – switching to upstream mirrors"
+       cat >/etc/apt/sources.list <<EOF
 deb http://deb.$DISTRO.org/$DISTRO ${DISTRO_CODENAME} main contrib non-free non-free-firmware
 deb http://deb.$DISTRO.org/$DISTRO ${DISTRO_CODENAME}-updates main contrib non-free non-free-firmware
 deb http://security.$DISTRO.org/ ${DISTRO_CODENAME}-security main contrib non-free non-free-firmware
 EOF
-   # add backports only for debian
-   if [[ "$DISTRO" == "debian" ]]; then
-      echo "deb http://deb.$DISTRO.org/$DISTRO ${DISTRO_CODENAME}-backports main contrib non-free non-free-firmware" \
-        > /etc/apt/sources.list.d/backports.list
-   fi
-   apt-get update -qq
+       # add backports only for debian
+       if [[ "$DISTRO" == "debian" ]]; then
+          echo "deb http://deb.$DISTRO.org/$DISTRO ${DISTRO_CODENAME}-backports main contrib non-free non-free-firmware" \
+            > /etc/apt/sources.list.d/backports.list
+       fi
+       apt-get update -qq
+    fi
+    complete_step
 fi
 
 # ---------- 2. basics ----------
-start_step "Installing Core Utilities"
-log "Refreshing package lists for core utilities"
-apt-get update -qq # CRITICAL: Rerunning update to guarantee lists are loaded after source fixes
-log "Installing core utilities (including tput for progress bar)"
-# tput is explicitly included for the progress_bar function
-apt-get install -y -qq curl wget gnupg lsb-release ca-certificates software-properties-common apt-transport-https tput
+if start_step "Installing Core Utilities"; then
+    log "Refreshing package lists for core utilities"
+    apt-get update -qq 
+    log "Installing core utilities (including progress bar support)"
+    # FIX: Replaced 'tput' with 'ncurses-bin' which contains the tput utility.
+    # Included 'zenity' here as a core utility needed for the user menu (Step 15).
+    apt-get install -y -qq curl wget gnupg lsb-release ca-certificates software-properties-common apt-transport-https ncurses-bin zenity
+    complete_step
+fi
 
 # ---------- 3. desktop (skip if any DE already installed) ----------
-start_step "Installing Desktop Environment"
-DE_PKGS=(xfce4-session gnome-session plasma-desktop budgie-desktop cinnamon-session)
-for pkg in "${DE_PKGS[@]}"; do
-    if dpkg -l | grep -q "^ii  $pkg"; then
-        warn "Desktop '$pkg' detected – skipping desktop install"; SKIP_DE=1; break
-    fi
-done
-if [[ "${SKIP_DE:-0}" == 1 ]]; then
-   :
-else
-   log "Installing lightweight desktop"
-   if [[ "$DISTRO" == "ubuntu" ]]; then
-      # FIX: Ensure 'lightdm' is installed for Ubuntu variant too if needed
-      apt-get install -y -qq xfce4 xfce4-terminal lightdm lightdm-gtk-greeter \
-                         thunar-archive-plugin mousepad ristretto arc-theme papirus-icon-theme
-   else  # debian
-      apt-get install -y -qq task-xfce-desktop lightdm
-   fi
-   # NOTE: systemctl commands often don't work correctly in a chroot.
-   # We leave them for completeness, assuming Cubic handles the boot setup.
-   systemctl set-default graphical.target 2>/dev/null || true
-   cat >/etc/lightdm/lightdm.conf.d/50-autologin.conf <<EOF
+if start_step "Installing Desktop Environment"; then
+    DE_PKGS=(xfce4-session gnome-session plasma-desktop budgie-desktop cinnamon-session)
+    for pkg in "${DE_PKGS[@]}"; do
+        if dpkg -l | grep -q "^ii  $pkg"; then
+            warn "Desktop '$pkg' detected – skipping desktop install"; SKIP_DE=1; break
+        fi
+    done
+    if [[ "${SKIP_DE:-0}" == 1 ]]; then
+       :
+    else
+       log "Installing lightweight desktop"
+       if [[ "$DISTRO" == "ubuntu" ]]; then
+          apt-get install -y -qq xfce4 xfce4-terminal lightdm lightdm-gtk-greeter \
+                             thunar-archive-plugin mousepad ristretto arc-theme papirus-icon-theme
+       else  # debian
+          apt-get install -y -qq task-xfce-desktop lightdm
+       fi
+       systemctl set-default graphical.target 2>/dev/null || true
+       cat >/etc/lightdm/lightdm.conf.d/50-autologin.conf <<EOF
 [Seat:*]
 autologin-user=${DISTRO}
 autologin-user-timeout=0
 user-session=xfce
 EOF
+    fi
+    complete_step
 fi
 
 # ---------- 4. Docker (distro-aware) ----------
-start_step "Installing Docker and Compose"
-# AUDIT: Set up the official Docker repository
-DOCKER_BASE_URL="https://download.docker.com/linux/${DISTRO}"
-DOCKER_GPG_KEY="/usr/share/keyrings/docker.gpg"
+if start_step "Installing Docker and Compose"; then
+    DOCKER_BASE_URL="https://download.docker.com/linux/${DISTRO}"
+    DOCKER_GPG_KEY="/usr/share/keyrings/docker.gpg"
 
-curl -fsSL ${DOCKER_BASE_URL}/gpg | gpg --dearmor -o "${DOCKER_GPG_KEY}"
-echo "deb [arch=$(dpkg --print-architecture) signed-by=${DOCKER_GPG_KEY}] \
-      ${DOCKER_BASE_URL} ${DISTRO_CODENAME} stable" \
-      > /etc/apt/sources.list.d/docker.list
+    curl -fsSL ${DOCKER_BASE_URL}/gpg | gpg --dearmor -o "${DOCKER_GPG_KEY}"
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=${DOCKER_GPG_KEY}] \
+          ${DOCKER_BASE_URL} ${DISTRO_CODENAME} stable" \
+          > /etc/apt/sources.list.d/docker.list
 
-apt-get update -qq
+    apt-get update -qq
 
-# Install Docker components
-apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-# FIX: Docker should be enabled, but we suppress errors if systemctl fails in chroot
-systemctl enable docker 2>/dev/null || true
+    systemctl enable docker 2>/dev/null || true
+    complete_step
+fi
 
 # ---------- 5. Nvidia Tools (for GPU acceleration) ----------
-start_step "Installing Nvidia/OpenCL support"
-if [[ "$DISTRO" == "ubuntu" ]]; then
-    # Ubuntu provides better support through its standard repos
-    # AUDIT: Added nvidia-docker2 for broader support
-    apt-get install -y -qq nvidia-container-toolkit nvidia-docker2
-else  # debian
-    # Debian requires non-free and generic runtimes
-    apt-get install -y -qq ocl-icd-libopencl1 libcuda1
+if start_step "Installing Nvidia/OpenCL support"; then
+    if [[ "$DISTRO" == "ubuntu" ]]; then
+        apt-get install -y -qq nvidia-container-toolkit nvidia-docker2
+    else  # debian
+        apt-get install -y -qq ocl-icd-libopencl1 libcuda1
+    fi
+    complete_step
 fi
 
 # ---------- 6. digiKam ----------
-start_step "Installing digiKam"
-apt-get install -y -qq digikam
+if start_step "Installing digiKam"; then
+    apt-get install -y -qq digikam
+    complete_step
+fi
 
 # ---------- 7. light photo tools (including darktable) ----------
-start_step "Installing Light Photo Tools (GIMP, darktable, etc.)"
-# AUDIT: Combined `mesa-opencl-icd` install here, as it's general utility
-apt-get install -y -qq imagemagick ffmpeg gimp exiv2 rclone duplicity testdisk darktable \
-                   mesa-opencl-icd systemd-zram-generator
+if start_step "Installing Light Photo Tools (GIMP, darktable, etc.)"; then
+    apt-get install -y -qq imagemagick ffmpeg gimp exiv2 rclone duplicity testdisk darktable \
+                       mesa-opencl-icd systemd-zram-generator
+    complete_step
+fi
 
 # ---------- 8. Flatpak (skip application install in chroot) ----------
-start_step "Installing Flatpak Infrastructure"
-# AUDIT: Condition check is robust, proceed with infrastructure install only
-if [[ -z "${CUBIC_CHROOT:-}" ]] && [[ $(stat -c %d/%i /) != "$(stat -c %d /proc/1/root/.)" ]]; then
-   log "Installing Flatpak infrastructure and Flathub remote..."
-   apt-get install -y -qq flatpak
-   flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-   log "Skipping Flatpak app installation to prevent chroot hang."
+if start_step "Installing Flatpak Infrastructure"; then
+    if [[ -z "${CUBIC_CHROOT:-}" ]] && [[ $(stat -c %d/%i /) != "$(stat -c %d /proc/1/root/.)" ]]; then
+       log "Installing Flatpak infrastructure and Flathub remote..."
+       apt-get install -y -qq flatpak
+       flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+       log "Skipping Flatpak app installation to prevent chroot hang."
+    fi
+    complete_step
 fi
 
 # ---------- 9. Python AI utils (venv on Debian, system on Ubuntu) ----------
-start_step "Installing Python AI Utilities"
-if [[ "$DISTRO" == "ubuntu" ]]; then
-   # FIX: Removed `python3-setuptools` as it's rarely needed and sometimes conflicts
-   apt-get install -y -qq python3-pip python3-dev build-essential
-   python3 -m pip install --break-system-packages -q ultralytics rembg clip-retrieval
-else  # debian
-   apt-get install -y -qq python3-venv python3-dev build-essential
-   python3 -m venv /opt/ai-venv
-   /opt/ai-venv/bin/pip install -q ultralytics rembg clip-retrieval
-   ln -sf /opt/ai-venv/bin/{ultralytics,rembg,clip-retrieval} /usr/local/bin/
+if start_step "Installing Python AI Utilities"; then
+    if [[ "$DISTRO" == "ubuntu" ]]; then
+       apt-get install -y -qq python3-pip python3-dev build-essential
+       python3 -m pip install --break-system-packages -q ultralytics rembg clip-retrieval
+    else  # debian
+       apt-get install -y -qq python3-venv python3-dev build-essential
+       python3 -m venv /opt/ai-venv
+       /opt/ai-venv/bin/pip install -q ultralytics rembg clip-retrieval
+       ln -sf /opt/ai-venv/bin/{ultralytics,rembg,clip-retrieval} /usr/local/bin/
+    fi
+    complete_step
 fi
 
 # ---------- 10. models ----------
-start_step "Downloading AI Models"
-mkdir -p /usr/share/ai-models
-# AUDIT: Added --no-check-certificate just in case of chroot certificate issues
-wget -q --no-check-certificate https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.onnx \
-      -O /usr/share/ai-models/yolov8n.onnx
-wget -q --no-check-certificate https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c45252f58cba95ac/ViT-B-32.pt \
-      -O /usr/share/ai-models/ViT-B-32.pt
+if start_step "Downloading AI Models"; then
+    mkdir -p /usr/share/ai-models
+    wget -q --no-check-certificate https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.onnx \
+          -O /usr/share/ai-models/yolov8n.onnx
+    wget -q --no-check-certificate https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c45252f58cba95ac/ViT-B-32.pt \
+          -O /usr/share/ai-models/ViT-B-32.pt
+    complete_step
+fi
 
 # ---------- 11. Immich ----------
-start_step "Configuring Immich (Docker)"
-mkdir -p /opt/immich && cd /opt/immich
-wget -q --no-check-certificate https://github.com/immich-app/immich/releases/latest/download/docker-compose.yml
-wget -q --no-check-certificate https://github.com/immich-app/immich/releases/latest/download/example.env -O .env
-# AUDIT: We use "docker compose pull" to download all images now, which is correct.
-docker compose pull
+if start_step "Configuring Immich (Docker)"; then
+    mkdir -p /opt/immich && cd /opt/immich
+    wget -q --no-check-certificate https://github.com/immich-app/immich/releases/latest/download/docker-compose.yml
+    wget -q --no-check-certificate https://github.com/immich-app/immich/releases/latest/download/example.env -O .env
+    docker compose pull
+    complete_step
+fi
 
 # ---------- 12. systemd service ----------
-start_step "Creating Immich Service"
-cat >/etc/systemd/system/immich-live.service <<'EOF'
+if start_step "Creating Immich Service"; then
+    cat >/etc/systemd/system/immich-live.service <<'EOF'
 [Unit]
 Description=Immich photo stack (live ISO)
 After=network-online.target
@@ -209,31 +249,35 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/opt/immich
-# FIX: Use the full path for compose command
 ExecStart=/usr/local/bin/docker compose up -d
 ExecStop=/usr/local/bin/docker compose down
 TimeoutStartSec=0
 [Install]
 WantedBy=multi-user.target
 EOF
-# FIX: Suppress errors in chroot for systemctl
-systemctl enable immich-live.service 2>/dev/null || true
+    systemctl enable immich-live.service 2>/dev/null || true
+    complete_step
+fi
 
 # ---------- 13. CompreFace ----------
-start_step "Pulling CompreFace Docker Image"
-docker pull exadel/compreface:1.2.0
+if start_step "Pulling CompreFace Docker Image"; then
+    docker pull exadel/compreface:1.2.0
+    complete_step
+fi
 
 # ---------- 14. AppImage ----------
-start_step "Downloading Upscayl AppImage"
-wget -qO /opt/Upscayl.AppImage \
-         --no-check-certificate https://github.com/upscayl/upscayl/releases/download/v2.9.1/upscayl-2.9.1-linux.AppImage
-chmod +x /opt/*.AppImage
+if start_step "Downloading Upscayl AppImage"; then
+    wget -qO /opt/Upscayl.AppImage \
+             --no-check-certificate https://github.com/upscayl/upscayl/releases/download/v2.9.1/upscayl-2.9.1-linux.AppImage
+    chmod +x /opt/*.AppImage
+    complete_step
+fi
 
 # ---------- 15. user menu ----------
-start_step "Setting Up User Menu"
-cat >/usr/local/bin/ai-photo-menu <<'EOF'
+if start_step "Setting Up User Menu"; then
+    cat >/usr/local/bin/ai-photo-menu <<'EOF'
 #!/bin/bash
-# FIX: Ensure zenity is installed, otherwise this menu fails
+# FIX: Zenity is installed in Section 2, so we proceed with the menu.
 if ! command -v zenity &> /dev/null; then
   echo "Zenity is not installed. Falling back to simple message."
   echo "AI Photo Workshop Tools:"
@@ -251,24 +295,22 @@ zenity --list --title="AI Photo Workshop" --column=Tool --column=Description \
   "darktable" "RAW developer" \
   "CompreFace" "Advanced face API (http://localhost:8000)"
 EOF
-chmod +x /usr/local/bin/ai-photo-menu
+    chmod +x /usr/local/bin/ai-photo-menu
 
-# FIX: Must install zenity for the menu to work!
-apt-get install -y -qq zenity
-
-mkdir -p /etc/skel/.config/autostart
-cat >/etc/skel/.config/autostart/ai-photo-menu.desktop <<EOF
+    mkdir -p /etc/skel/.config/autostart
+    cat >/etc/skel/.config/autostart/ai-photo-menu.desktop <<EOF
 [Desktop Entry]
 Type=Application
 Name=AI Photo Workshop
 Exec=ai-photo-menu
 Terminal=false
 EOF
+    complete_step
+fi
 
 # ---------- 16. user documentation/shortcuts (for darktable) ----------
-start_step "Creating Desktop Shortcuts and Docs"
-# Ensure desktop is installed for this to work, which is covered in section 3.
-cat >/etc/skel/Desktop/darktable.desktop <<EOF
+if start_step "Creating Desktop Shortcuts and Docs"; then
+    cat >/etc/skel/Desktop/darktable.desktop <<EOF
 [Desktop Entry]
 Type=Application
 Name=darktable RAW Developer
@@ -277,21 +319,37 @@ Icon=darktable
 Terminal=false
 Categories=Graphics;Photography;
 EOF
-chmod +x /etc/skel/Desktop/darktable.desktop
-ln -sf /etc/skel/Desktop/darktable.desktop /usr/share/applications/darktable.desktop # Symlink for global visibility
+    chmod +x /etc/skel/Desktop/darktable.desktop
+    ln -sf /etc/skel/Desktop/darktable.desktop /usr/share/applications/darktable.desktop # Symlink for global visibility
+    complete_step
+fi
 
 # ---------- 17. cleanup ----------
-start_step "Cleaning Up System"
-# AUDIT: Added `docker system prune -a -f` to remove all cached docker images
-# that were pulled in steps 11 and 13, saving significant ISO space.
-docker system prune -a -f 2>/dev/null || true
+if start_step "Cleaning Up System"; then
+    docker system prune -a -f 2>/dev/null || true # Prune docker images to save ISO space
 
-apt-get autoremove -y -qq
-apt-get clean
-rm -rf /tmp/* /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
-history -c
-progress_bar 17 "COMPLETE" # Final 100% progress
-tput cup $(tput lines) 0 2>/dev/null || true # Move cursor to bottom left
-tput el 2>/dev/null || true # Clear the progress bar line
-echo -e "${G}[SUCCESS]${N} All done – close this terminal and build the ISO in Cubic"
+    apt-get autoremove -y -qq
+    apt-get clean
+    rm -rf /tmp/* /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
+    history -c
+    complete_step
+fi
+
+# ---------- 18. Finalization and State Reset ----------
+# New section to handle the final clean output and state removal.
+if start_step "Finalizing Build"; then
+    # Clear progress bar and print success message
+    progress_bar 17 "COMPLETE" 
+    tput cup $(tput lines) 0 2>/dev/null || true
+    tput el 2>/dev/null || true 
+
+    # Remove the state file on successful completion
+    if [[ -f "${STATE_FILE}" ]]; then
+        rm "${STATE_FILE}"
+    fi
+
+    echo -e "${G}[SUCCESS]${N} All done – close this terminal and build the ISO in Cubic"
+    # Ensure the script exits cleanly without running step 18 again if executed twice.
+    CURRENT_STEP=18
+fi
 
