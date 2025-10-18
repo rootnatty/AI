@@ -68,10 +68,15 @@ apt-get clean
 
 
 # ---------- 5. Flatpak ----------
-log "Installing Flatpak apps"
-apt-get install -y -qq flatpak
-flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-flatpak install -y flathub org.gnome.FontManager || warn "FontManager warning ignored"
+# ---------- 5  Flatpak (skip if inside Cubic chroot) ----------
+if [[ -z "${CUBIC_CHROOT:-}" ]] && [[ $(stat -c %d/%i /) != "$(stat -c %d /proc/1/root/.)" ]]; then
+    log "Installing Flatpak apps"
+    apt-get install -y flatpak
+    flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+    flatpak install -y flathub org.gnome.FontManager || warn "FontManager install skipped"
+else
+    warn "Cubic chroot detected – skipping Flatpak to avoid bwrap spam"
+fi
 
 # ---------- 6. Python AI utils ----------
 log "Installing Python tools"
