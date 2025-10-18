@@ -18,6 +18,10 @@ apt-get update -qq
 apt-get install -y -qq curl wget software-properties-common apt-transport-https \
                    ca-certificates gnupg lsb-release
 
+# ---------- 1.5 Install Lightweight Desktop Environment ----------
+apt-get install -y xubuntu-desktop lightdm network-manager gnome-terminal
+systemctl set-default graphical.target
+
 # ---------- 2. Docker ----------
 log "Installing Docker"
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker.gpg
