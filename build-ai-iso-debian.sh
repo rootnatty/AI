@@ -38,8 +38,10 @@ EOF
 fi
 
 # ---------- 2. basics ----------
+log "Refreshing package lists for core utilities"
+apt-get update -qq # CRITICAL: Rerunning update to guarantee lists are loaded after source fixes
 log "Installing core utilities"
-apt-get install -y -qq curl wget gnupg lsb-release ca-certificates software-properties-common
+apt-get install -y -qq curl wget gnupg lsb-release ca-certificates software-properties-common apt-transport-https
 
 # ---------- 3. desktop (skip if any DE already installed) ----------
 DE_PKGS=(xfce4-session gnome-session plasma-desktop budgie-desktop cinnamon-session)
@@ -70,8 +72,7 @@ fi
 # ---------- 4. Docker (distro-aware) ----------
 log "Installing Docker"
 
-# Pre-requisite packages for adding external repos
-apt-get install -y -qq apt-transport-https 
+# The package apt-transport-https is moved up to section 2 for consistency.
 
 # Set up the official Docker repository for both Debian and Ubuntu
 DOCKER_BASE_URL="https://download.docker.com/linux/${DISTRO}"
