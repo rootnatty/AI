@@ -98,10 +98,15 @@ log "Installing light photo tools"
 apt-get install -y -qq imagemagick ffmpeg gimp exiv2 rclone duplicity testdisk \
                    mesa-opencl-icd systemd-zram-generator
 
+
 # ---------- 7. Flatpak (skip inside Cubic) ----------
 if [[ -z "${CUBIC_CHROOT:-}" ]] && [[ $(stat -c %d/%i /) != "$(stat -c %d /proc/1/root/.)" ]]; then
-   apt-get install -y flatpak
+   log "Installing Flatpak components..."
+   apt-get install -y -qq flatpak
    flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+   # Installing applications via Flatpak is prone to failure in chroots.
+   # We use '|| true' to ignore any installation failure to prevent script abortion.
    flatpak install -y flathub org.gnome.FontManager || true
 fi
 
