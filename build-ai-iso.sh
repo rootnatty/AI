@@ -19,7 +19,8 @@ apt-get install -y -qq curl wget software-properties-common apt-transport-https 
                    ca-certificates gnupg lsb-release
 
 # ---------- 1.5 Install Lightweight Desktop Environment ----------
-# ultra-light Xfce (no tasksel)
+# ---------- 1½  ultra-light Xfce desktop ----------
+log "Installing minimal Xfce"
 apt-get install -y xfce4 xfce4-terminal lightdm lightdm-gtk-greeter \
                    thunar thunar-archive-plugin mousepad ristretto \
                    arc-theme papirus-icon-theme
